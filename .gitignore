@@ -1,0 +1,46 @@
+# Python environments and generated files
+.venv/
+venv/
+backend/venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node/Vite generated files
+frontend/node_modules/
+frontend/dist/
+
+# Local environment variables and credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Local databases' transient sidecars and generated backup copy
+backend/routerescue.db-shm
+backend/routerescue.db-wal
+backend/routerescue-pre-allocation3-fix-*.db
+
+# Temporary/editor/OS files
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
