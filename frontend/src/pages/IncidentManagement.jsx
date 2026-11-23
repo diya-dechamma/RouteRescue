@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { incidentAPI } from '../services/api.js'
-import { RefreshCw, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { EmptyState, LoadingState, PageHeader, SeverityBadge, StatusBadge } from '../components/ui.jsx'
 
 function IncidentManagement() {
   const [incidents, setIncidents] = useState([])
@@ -70,18 +71,12 @@ function IncidentManagement() {
 
   return (
     <div>
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1>Incident Management</h1>
-            <p>View, filter, and manage all emergency incidents</p>
-          </div>
-          <button className="btn btn-secondary" onClick={fetchIncidents}>
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        compact
+        title="Incident Management"
+        description="Review incoming reports, severity, status, and extracted incident details."
+        actions={<button className="btn btn-secondary" onClick={fetchIncidents}><RefreshCw size={15} />Refresh</button>}
+      />
 
       {error && <div className="alert alert-danger">{error}</div>}
 
@@ -120,7 +115,7 @@ function IncidentManagement() {
         </div>
 
         {loading ? (
-          <div className="loading">Loading incidents...</div>
+          <LoadingState label="Loading incident records…" />
         ) : (
           <div className="table-container">
             <table>
@@ -138,7 +133,7 @@ function IncidentManagement() {
               </thead>
               <tbody>
                 {incidents.length === 0 ? (
-                  <tr><td colSpan={8} className="empty-state">No incidents found</td></tr>
+                  <tr><td colSpan={8}><EmptyState title="No incidents match these filters" description="Change a filter or refresh to see available reports." /></td></tr>
                 ) : incidents.map(inc => {
                   const nlp = parseNlp(inc.nlp_extracted)
                   const isExpanded = expandedId === inc.id
@@ -148,10 +143,10 @@ function IncidentManagement() {
                         <td style={{ color: '#888', fontSize: '0.8rem' }}>#{inc.id}</td>
                         <td style={{ fontWeight: 500, maxWidth: 200 }}>{inc.title}</td>
                         <td><span className={`badge badge-${inc.incident_type}`}>{inc.incident_type?.replace('_', ' ')}</span></td>
-                        <td><span className={`badge badge-${inc.severity}`}>{inc.severity}</span></td>
+                        <td><SeverityBadge severity={inc.severity} /></td>
                         <td>{inc.location}</td>
                         <td>{inc.affected_people}</td>
-                        <td><span className={`badge badge-${inc.status}`}>{inc.status}</span></td>
+                        <td><StatusBadge status={inc.status} /></td>
                         <td>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             <button className="btn btn-secondary btn-sm" onClick={() => toggleExpand(inc.id)}>

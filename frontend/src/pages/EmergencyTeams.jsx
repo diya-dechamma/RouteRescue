@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { teamAPI } from '../services/api.js'
+import { MapPin, Package, Users } from 'lucide-react'
+import { EmptyState, PageHeader, SectionHeader, StatusBadge } from '../components/ui.jsx'
 
 const emptyTeam = {
   name: '',
@@ -10,11 +12,18 @@ const emptyTeam = {
   capacity: 5,
 }
 
+function parseResources(value) {
+  if (!value) return {}
+  if (typeof value !== 'string') return value
+  try { return JSON.parse(value) } catch { return {} }
+}
+
 function EmergencyTeams() {
   const [teams, setTeams] = useState([])
   const [form, setForm] = useState(emptyTeam)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const loadTeams = useCallback(async () => {
     try {
@@ -23,6 +32,8 @@ function EmergencyTeams() {
       setError('')
     } catch (err) {
       setError(err.response?.data?.detail || 'Could not load emergency teams.')
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -60,14 +71,11 @@ function EmergencyTeams() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Emergency Teams</h1>
-        <p>Manage responder units, their locations, capacity, and operational status.</p>
-      </div>
+      <PageHeader compact title="Emergency Teams" description="Manage response units, review their listed inventory, and update availability." />
       {error && <div className="alert alert-danger">{error}</div>}
       <div className="grid-2">
         <section className="card">
-          <div className="card-header"><span className="card-title">Register a Team</span></div>
+          <SectionHeader title="Register a team" description="Add a unit to the live responder roster." icon={Users} />
           <form onSubmit={submit}>
             <div className="form-group"><label>Team name</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div className="form-group">
@@ -85,23 +93,52 @@ function EmergencyTeams() {
             <div className="form-group"><label>Capacity</label><input type="number" min="1" value={form.capacity} onChange={e => setForm({ ...form, capacity: e.target.value })} /></div>
             <button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Add Team'}</button>
           </form>
-        </section>
-        <section className="card">
-          <div className="card-header"><span className="card-title">Responder Roster</span><span>{teams.length} units</span></div>
-          <div className="table-container">
-            <table><thead><tr><th>Team</th><th>Type</th><th>Base</th><th>Capacity</th><th>Status</th></tr></thead>
-              <tbody>{teams.map(team => (
-                <tr key={team.id}>
-                  <td>{team.name}</td><td>{team.team_type?.replace('_', ' ')}</td><td>{team.location || '—'}</td><td>{team.capacity}</td>
-                  <td><select aria-label={`${team.name} availability`} value={team.availability} onChange={e => setAvailability(team, e.target.value)}>
-                    <option value="available">Available</option><option value="busy">Busy</option><option value="offline">Offline</option>
-                  </select></td>
-                </tr>
-              ))}{teams.length === 0 && <tr><td colSpan={5} className="empty-state">No teams registered.</td></tr>}</tbody>
-            </table>
-          </div>
+          <p className="muted-copy">Inventory entry is not available in this form; newly registered teams may have no resource stock recorded.</p>
         </section>
       </div>
+      <section className="card">
+        <SectionHeader title="Responder roster" description={`${teams.length} units currently returned by the backend.`} icon={Users} />
+        {loading ? <div className="loading">Loading teams…</div> : teams.length ? (
+          <div className="team-card-grid">
+            {teams.map(team => {
+              const resources = parseResources(team.resources)
+              const entries = Object.entries(resources)
+              return (
+                <article className="team-card" key={team.id}>
+                  <div className="team-card-heading">
+                    <span className="team-avatar"><Users size={18} /></span>
+                    <div className="team-card-title">
+                      <strong>{team.name}</strong>
+                      <span>{team.team_type?.replaceAll('_', ' ') || 'Response team'}</span>
+                    </div>
+                    <StatusBadge status={team.availability} />
+                  </div>
+                  <div className="team-card-meta">
+                    <span><MapPin size={14} />{team.location || 'Base location not set'}</span>
+                    <span><Users size={14} />Capacity {team.capacity ?? '—'}</span>
+                  </div>
+                  <div className="team-card-resource-heading"><Package size={14} /> Listed inventory</div>
+                  {entries.length ? (
+                    <div className="inventory-chip-list">
+                      {entries.map(([name, quantity]) => (
+                        <span className="inventory-chip" key={name}>
+                          {name.replaceAll('_', ' ')} <strong>{quantity}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  ) : <p className="muted-copy">No inventory is recorded for this team.</p>}
+                  <div className="team-card-footer">
+                    <label htmlFor={`availability-${team.id}`}>Availability</label>
+                    <select id={`availability-${team.id}`} aria-label={`${team.name} availability`} value={team.availability} onChange={e => setAvailability(team, e.target.value)}>
+                      <option value="available">Available</option><option value="busy">Busy</option><option value="offline">Offline</option>
+                    </select>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : <EmptyState title="No teams registered" description="Create a team to populate the responder roster." />}
+      </section>
     </div>
   )
 }

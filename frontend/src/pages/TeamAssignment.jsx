@@ -1,16 +1,26 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { assignmentAPI } from '../services/api.js'
+import { AlertTriangle, RefreshCw, UserCheck, Users } from 'lucide-react'
+import { assignmentAPI, incidentAPI, teamAPI } from '../services/api.js'
+import { EmptyState, PageHeader, SectionHeader, SeverityBadge, StatusBadge } from '../components/ui.jsx'
 
 function TeamAssignment() {
   const [assignments, setAssignments] = useState([])
+  const [incidents, setIncidents] = useState([])
+  const [teams, setTeams] = useState([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const response = await assignmentAPI.getAll()
-      setAssignments(response.data)
+      const [assignmentResponse, incidentResponse, teamResponse] = await Promise.all([
+        assignmentAPI.getAll(),
+        incidentAPI.getAll(),
+        teamAPI.getAll(),
+      ])
+      setAssignments(assignmentResponse.data)
+      setIncidents(incidentResponse.data)
+      setTeams(teamResponse.data)
       setError('')
     } catch (err) {
       setError(err.response?.data?.detail || 'Could not load assignments.')
@@ -34,29 +44,59 @@ function TeamAssignment() {
     }
   }
 
+  const incidentById = Object.fromEntries(incidents.map(item => [item.id, item]))
+  const teamById = Object.fromEntries(teams.map(item => [item.id, item]))
+
   return (
     <div>
-      <div className="page-header">
-        <h1>Emergency Team Assignment</h1>
-        <p>Match active incidents to available responders using incident type, proximity, and capacity.</p>
-      </div>
+      <PageHeader
+        compact
+        title="Emergency Team Assignment"
+        description="Review saved responder assignments and run the existing automatic matching workflow."
+        actions={<button className="btn btn-primary" onClick={autoAssign} disabled={running}><RefreshCw size={15} className={running ? 'spin' : ''} />{running ? 'Assigning…' : 'Auto-assign active incidents'}</button>}
+      />
       {error && <div className="alert alert-danger">{error}</div>}
       {message && <div className="alert alert-success">{message}</div>}
       <section className="card">
-        <div className="card-header"><span className="card-title">Assignment Operations</span>
-          <button className="btn btn-primary" onClick={autoAssign} disabled={running}>{running ? 'Assigning…' : 'Auto-assign active incidents'}</button>
+        <SectionHeader title="Current response assignments" description={`${assignments.length} assignment records returned by the backend.`} icon={UserCheck} />
+        <div className="assignment-list">
+          {assignments.map(item => {
+            const incident = incidentById[item.incident_id]
+            const team = teamById[item.team_id]
+            return (
+              <article className="assignment-card" key={item.id}>
+                <div className="assignment-card-head">
+                  <div className="assignment-number">#{item.id}</div>
+                  <StatusBadge status={item.status} />
+                  <span className="assignment-time">{item.assigned_at ? new Date(item.assigned_at).toLocaleString() : 'Time unavailable'}</span>
+                </div>
+                <div className="assignment-pair">
+                  <div className="assignment-entity">
+                    <span className="assignment-entity-label"><AlertTriangle size={14} /> Incident</span>
+                    <strong>{incident?.title || `Incident #${item.incident_id}`}</strong>
+                    <div className="assignment-entity-meta">
+                      <span>{incident?.location || 'Location unavailable'}</span>
+                      {incident?.severity && <SeverityBadge severity={incident.severity} />}
+                    </div>
+                  </div>
+                  <div className="assignment-connector" aria-hidden="true">→</div>
+                  <div className="assignment-entity">
+                    <span className="assignment-entity-label"><Users size={14} /> Assigned response team</span>
+                    <strong>{team?.name || `Team #${item.team_id}`}</strong>
+                    <div className="assignment-entity-meta">
+                      <span>{team?.team_type?.replaceAll('_', ' ') || 'Team type unavailable'}</span>
+                      {team && <StatusBadge status={team.availability} />}
+                    </div>
+                  </div>
+                </div>
+                {item.reason && <div className="assignment-reason"><span>Assignment rationale</span><p>{item.reason}</p></div>}
+              </article>
+            )
+          })}
         </div>
-        <p>Each available team is assigned to at most one incident in a run. Re-run after new emergencies or teams are added.</p>
+        {!assignments.length && <EmptyState title="No assignments yet" description="Automatic assignments will appear here after the backend creates them." />}
       </section>
-      <section className="card">
-        <div className="card-header"><span className="card-title">Current Assignments</span><span>{assignments.length} records</span></div>
-        <div className="table-container"><table>
-          <thead><tr><th>Assignment</th><th>Incident</th><th>Team</th><th>Status</th><th>Decision notes</th></tr></thead>
-          <tbody>{assignments.map(item => (
-            <tr key={item.id}><td>#{item.id}</td><td>#{item.incident_id}</td><td>#{item.team_id}</td><td>{item.status}</td><td>{item.reason || '—'}</td></tr>
-          ))}{assignments.length === 0 && <tr><td colSpan={5} className="empty-state">No assignments yet.</td></tr>}</tbody>
-        </table></div>
-      </section>
+      <p className="muted-copy">Automatic assignment uses the existing backend matching rules. Each available team is assigned at most once per run.</p>
     </div>
   )
 }

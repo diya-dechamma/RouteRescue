@@ -1,293 +1,330 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { incidentAPI, teamAPI, roadAPI } from '../services/api.js'
-import { RefreshCw, AlertTriangle, Users, Map, Activity } from 'lucide-react'
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer } from 'react-leaflet'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock3,
+  MapPinned,
+  RefreshCw,
+  ShieldAlert,
+  Users,
+} from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { assignmentAPI, incidentAPI, resourceAPI, roadAPI, teamAPI } from '../services/api.js'
+import RouteMap from '../components/RouteMap.jsx'
+import { EmptyState, ErrorState, LoadingState, MapLegend, PageHeader, SectionHeader, SeverityBadge, StatusBadge, StatCard } from '../components/ui.jsx'
 
-function NetworkMap({ network, incidents, teams, roads }) {
-  const nodes = Object.fromEntries((network?.nodes || []).map(node => [node.id, node]))
-  const roadById = Object.fromEntries(roads.map(road => [road.id, road]))
-
-  return (
-    <MapContainer center={[12.2958, 76.6394]} zoom={12} scrollWheelZoom className="map-container">
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      {(network?.edges || []).map(edge => {
-        const start = nodes[edge.source]
-        const end = nodes[edge.target]
-        if (!start || !end) return null
-        const blocked = roadById[edge.id]?.accessibility === 'blocked'
-        return (
-          <Polyline
-            key={edge.id}
-            positions={[[start.lat, start.lng], [end.lat, end.lng]]}
-            pathOptions={{ color: blocked ? '#c0392b' : '#2878b5', weight: blocked ? 5 : 3, dashArray: blocked ? '6 6' : undefined }}
-          >
-            <Popup>{roadById[edge.id]?.name || `${edge.source} - ${edge.target}`} · {blocked ? 'Blocked' : roadById[edge.id]?.accessibility || 'Simulated network'}</Popup>
-          </Polyline>
-        )
-      })}
-      {incidents.filter(item => item.lat != null && item.lng != null).map(incident => (
-        <CircleMarker key={`incident-${incident.id}`} center={[incident.lat, incident.lng]} radius={8} pathOptions={{ color: '#c0392b' }}>
-          <Popup>Emergency: {incident.title} · {incident.severity}</Popup>
-        </CircleMarker>
-      ))}
-      {teams.filter(team => team.lat != null && team.lng != null).map(team => (
-        <CircleMarker key={`team-${team.id}`} center={[team.lat, team.lng]} radius={6} pathOptions={{ color: team.availability === 'available' ? '#23845b' : '#777' }}>
-          <Popup>{team.name} · {team.availability}</Popup>
-        </CircleMarker>
-      ))}
-    </MapContainer>
-  )
+const severityOrder = ['critical', 'high', 'medium', 'low']
+const severityColors = {
+  critical: '#ef5c6b',
+  high: '#f0a451',
+  medium: '#e9c66e',
+  low: '#45c995',
 }
+const roadStatuses = [
+  { key: 'accessible', label: 'Accessible', color: '#45c995' },
+  { key: 'partial', label: 'Partial', color: '#f0b858' },
+  { key: 'high_risk', label: 'High risk', color: '#ef8b67' },
+  { key: 'blocked', label: 'Blocked', color: '#ef5c6b' },
+]
+const teamStatuses = ['available', 'busy', 'offline']
 
-function SeverityBadge({ severity }) {
-  return <span className={`badge badge-${severity}`}>{severity}</span>
-}
-
-function StatusBadge({ status }) {
-  return <span className={`badge badge-${status}`}>{status}</span>
+function formatIncidentDate(value) {
+  if (!value) return 'Time unavailable'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Time unavailable' : date.toLocaleString()
 }
 
 function Dashboard() {
-  const [incidents, setIncidents] = useState([])
-  const [teams, setTeams] = useState([])
-  const [roads, setRoads] = useState([])
-  const [network, setNetwork] = useState(null)
+  const [data, setData] = useState({
+    incidents: [],
+    teams: [],
+    roads: [],
+    network: null,
+    assignments: [],
+    resourceSummary: null,
+  })
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [lastRefresh, setLastRefresh] = useState(new Date())
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState('')
+  const [lastRefresh, setLastRefresh] = useState(null)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const fetchData = useCallback(async (background = false) => {
+    if (background) setRefreshing(true)
+    else setLoading(true)
+    setError('')
     try {
-      const [incRes, teamRes, roadRes, networkRes] = await Promise.all([
+      const [incidents, teams, roads, network, assignments, resourceSummary] = await Promise.all([
         incidentAPI.getAll(),
         teamAPI.getAll(),
         roadAPI.getAll(),
         roadAPI.getNetwork(),
+        assignmentAPI.getAll(),
+        resourceAPI.getSummary(),
       ])
-      setIncidents(incRes.data)
-      setTeams(teamRes.data)
-      setRoads(roadRes.data)
-      setNetwork(networkRes.data)
+      setData({
+        incidents: incidents.data,
+        teams: teams.data,
+        roads: roads.data,
+        network: network.data,
+        assignments: assignments.data,
+        resourceSummary: resourceSummary.data,
+      })
       setLastRefresh(new Date())
-    } catch (err) {
-      setError('Failed to load dashboard data. Make sure the backend is running.')
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || 'Dashboard data could not be loaded. Check the backend connection and retry.')
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const totalIncidents = incidents.length
-  const criticalIncidents = incidents.filter(i => i.severity === 'critical').length
-  const activeTeams = teams.filter(t => t.availability === 'available').length
-  const blockedRoads = roads.filter(r => r.accessibility === 'blocked').length
+  const counts = useMemo(() => ({
+    critical: data.incidents.filter(item => item.severity === 'critical').length,
+    activeTeams: data.teams.filter(item => item.availability === 'available').length,
+    accessibleRoads: data.roads.filter(item => item.accessibility === 'accessible').length,
+    activeIncidents: data.incidents.filter(item => item.status === 'active').length,
+  }), [data])
 
-  const recentIncidents = [...incidents]
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .slice(0, 8)
+  const severityData = useMemo(() => severityOrder.map(severity => ({
+    name: severity,
+    value: data.incidents.filter(item => item.severity === severity).length,
+  })).filter(item => item.value > 0), [data.incidents])
 
-  if (loading) return <div className="loading">Loading dashboard...</div>
+  const activityData = useMemo(() => {
+    const grouped = new Map()
+    data.incidents.forEach(incident => {
+      if (!incident.created_at) return
+      const date = new Date(incident.created_at)
+      if (Number.isNaN(date.getTime())) return
+      const key = date.toLocaleDateString()
+      grouped.set(key, (grouped.get(key) || 0) + 1)
+    })
+    return [...grouped.entries()]
+      .map(([date, reports]) => ({ date, reports }))
+      .slice(-7)
+  }, [data.incidents])
+
+  const roadCounts = useMemo(() => roadStatuses.map(status => ({
+    ...status,
+    value: data.roads.filter(road => road.accessibility === status.key).length,
+  })), [data.roads])
+
+  const teamCounts = useMemo(() => teamStatuses.map(status => ({
+    status,
+    value: data.teams.filter(team => team.availability === status).length,
+  })), [data.teams])
+
+  const recentIncidents = useMemo(() => [...data.incidents]
+    .sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
+    .slice(0, 5), [data.incidents])
+
+  const savedRoutes = useMemo(() => data.assignments
+    .filter(assignment => assignment.status === 'active' && assignment.route_data)
+    .map(assignment => ({
+      id: assignment.id,
+      route: assignment.route_data,
+      label: `Assignment #${assignment.id} · Team #${assignment.team_id}`,
+    })), [data.assignments])
+
+  if (loading) return <LoadingState label="Loading command center data…" />
 
   return (
-    <div>
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1>Dashboard</h1>
-            <p>AI-powered emergency response overview</p>
-          </div>
-          <button className="btn btn-secondary" onClick={fetchData}>
-            <RefreshCw size={16} />
-            Refresh
+    <div className="dashboard-page">
+      <PageHeader
+        compact
+        title="Command Center"
+        description="Live operational overview powered by current incident, team, road, assignment, and allocation records."
+        actions={
+          <button className="btn btn-secondary" onClick={() => fetchData(true)} disabled={refreshing}>
+            <RefreshCw size={15} className={refreshing ? 'spin' : ''} />
+            {refreshing ? 'Refreshing' : 'Refresh'}
           </button>
-        </div>
-        {lastRefresh && (
-          <p style={{ fontSize: '0.78rem', color: '#999', marginTop: 4 }}>
-            Last updated: {lastRefresh.toLocaleTimeString()}
-          </p>
-        )}
+        }
+      />
+      {error && <ErrorState message={error} onRetry={() => fetchData()} />}
+
+      <div className="dashboard-stamp">
+        <span><span className="status-pulse" /> Data connected</span>
+        <span>{lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Waiting for first refresh'}</span>
       </div>
 
-      {error && <div className="alert alert-danger">{error}</div>}
+      <section className="stats-grid" aria-label="Operational metrics">
+        <StatCard label="Total incidents" value={data.incidents.length} note={`${counts.activeIncidents} active`} icon={AlertTriangle} tone="blue" />
+        <StatCard label="Critical incidents" value={counts.critical} note="Requires priority response" icon={ShieldAlert} tone="red" />
+        <StatCard label="Available teams" value={counts.activeTeams} note={`${data.teams.length} teams registered`} icon={Users} tone="green" />
+        <StatCard label="Accessible roads" value={counts.accessibleRoads} note={`${data.roads.length} roads monitored`} icon={MapPinned} tone="cyan" />
+        <StatCard label="Saved allocations" value={data.resourceSummary?.total_allocations ?? 0} note="Allocation records" icon={CheckCircle2} tone="amber" />
+      </section>
 
-      <div className="stats-grid">
-        <div className="stat-card blue">
-          <div className="stat-value">{totalIncidents}</div>
-          <div className="stat-label">Total Incidents</div>
-        </div>
-        <div className="stat-card red">
-          <div className="stat-value">{criticalIncidents}</div>
-          <div className="stat-label">Critical Incidents</div>
-        </div>
-        <div className="stat-card green">
-          <div className="stat-value">{activeTeams}</div>
-          <div className="stat-label">Available Teams</div>
-        </div>
-        <div className="stat-card orange">
-          <div className="stat-value">{blockedRoads}</div>
-          <div className="stat-label">Blocked Roads</div>
-        </div>
-      </div>
+      <div className="dashboard-grid">
+        <section className="card dashboard-map-card">
+          <SectionHeader
+            title="Response map"
+            description="Persisted incidents, teams, road status, and active assignment routes."
+            icon={MapPinned}
+          />
+          {data.network ? (
+            <>
+              <RouteMap
+                network={data.network}
+                roads={data.roads}
+                incidents={data.incidents}
+                teams={data.teams}
+                routes={savedRoutes}
+              />
+              <MapLegend items={[
+                { label: 'Active route', color: '#38bdf8', kind: 'line' },
+                { label: 'Blocked road', color: '#ef5c6b', kind: 'dashed' },
+                { label: 'Available team', color: '#45c995', kind: 'dot' },
+                { label: 'Critical incident', color: '#ef5c6b', kind: 'dot' },
+              ]} />
+              <p className="map-disclaimer">Simulated Mysuru network and stored demonstration conditions; not live dispatch guidance.</p>
+            </>
+          ) : <EmptyState title="Map network unavailable" description="The road network endpoint returned no map data." />}
+        </section>
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">
-              <AlertTriangle size={16} style={{ display: 'inline', marginRight: 6 }} />
-              Recent Incidents
-            </span>
-            <span style={{ fontSize: '0.8rem', color: '#999' }}>{incidents.length} total</span>
-          </div>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Type</th>
-                  <th>Severity</th>
-                  <th>Location</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentIncidents.length === 0 ? (
-                  <tr><td colSpan={5} className="empty-state">No incidents found</td></tr>
-                ) : recentIncidents.map(inc => (
-                  <tr key={inc.id}>
-                    <td style={{ fontWeight: 500 }}>{inc.title}</td>
-                    <td><span className={`badge badge-${inc.incident_type}`}>{inc.incident_type?.replace('_', ' ')}</span></td>
-                    <td><SeverityBadge severity={inc.severity} /></td>
-                    <td>{inc.location}</td>
-                    <td><StatusBadge status={inc.status} /></td>
-                  </tr>
+        <section className="card">
+          <SectionHeader title="Incident severity" description="Distribution across current incident records." icon={ShieldAlert} />
+          {severityData.length ? (
+            <>
+              <div className="severity-chart-wrap">
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie
+                      data={severityData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={52}
+                      outerRadius={76}
+                      paddingAngle={3}
+                      stroke="none"
+                    >
+                      {severityData.map(entry => <Cell key={entry.name} fill={severityColors[entry.name]} />)}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ background: '#102137', border: '1px solid #2a405a', borderRadius: 8, color: '#e7eef8' }}
+                      formatter={(value, name) => [value, `${name} incidents`]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="severity-chart-center">
+                  <strong>{data.incidents.length}</strong><span>incidents</span>
+                </div>
+              </div>
+              <div className="chart-legend">
+                {severityData.map(item => (
+                  <span className="chart-legend-item" key={item.name}>
+                    <i className="chart-legend-dot" style={{ background: severityColors[item.name] }} />
+                    <span>{item.name}</span><strong>{item.value}</strong>
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </div>
+            </>
+          ) : <EmptyState title="No incidents to chart" description="Severity distribution will appear when incident records are available." />}
+        </section>
 
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">GIS Response Map</span>
-            <span style={{ fontSize: '0.8rem', color: '#777' }}>Simulated Mysuru road network · OpenStreetMap base layer</span>
-          </div>
-          <NetworkMap network={network} incidents={incidents} teams={teams} roads={roads} />
-          <p style={{ fontSize: '0.78rem', color: '#777', marginTop: 8 }}>
-            Route and road-condition overlays use the project’s simulated demonstration data; they are not validated live forecasts.
-          </p>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">
-              <Users size={16} style={{ display: 'inline', marginRight: 6 }} />
-              Teams Status
-            </span>
-            <span style={{ fontSize: '0.8rem', color: '#999' }}>{teams.length} total</span>
-          </div>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Team Name</th>
-                  <th>Type</th>
-                  <th>Location</th>
-                  <th>Status</th>
-                  <th>Capacity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teams.length === 0 ? (
-                  <tr><td colSpan={5} className="empty-state">No teams found</td></tr>
-                ) : teams.slice(0, 8).map(team => (
-                  <tr key={team.id}>
-                    <td style={{ fontWeight: 500 }}>{team.name}</td>
-                    <td><span className={`badge badge-${team.team_type}`}>{team.team_type?.replace('_', ' ')}</span></td>
-                    <td>{team.location}</td>
-                    <td><span className={`badge badge-${team.availability}`}>{team.availability}</span></td>
-                    <td>{team.capacity}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <span className="card-title">
-            <Map size={16} style={{ display: 'inline', marginRight: 6 }} />
-            Road Network Status
-          </span>
-          <span style={{ fontSize: '0.8rem', color: '#999' }}>{roads.length} roads</span>
-        </div>
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Road Name</th>
-                <th>From</th>
-                <th>To</th>
-                <th>Accessibility</th>
-                <th>Risk Score</th>
-                <th>Weather</th>
-                <th>Traffic</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roads.length === 0 ? (
-                <tr><td colSpan={7} className="empty-state">No roads found</td></tr>
-              ) : roads.slice(0, 6).map(road => (
-                <tr key={road.id}>
-                  <td style={{ fontWeight: 500 }}>{road.name}</td>
-                  <td>{road.start_node}</td>
-                  <td>{road.end_node}</td>
-                  <td><span className={`badge badge-${road.accessibility}`}>{road.accessibility}</span></td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontWeight: 600 }}>{(road.risk_score || 0).toFixed(2)}</span>
-                      <div className="progress-bar" style={{ width: 60 }}>
-                        <div
-                          className={`progress-fill ${road.risk_score > 0.6 ? 'red' : road.risk_score > 0.3 ? 'orange' : 'green'}`}
-                          style={{ width: `${Math.min(100, (road.risk_score || 0) * 100)}%` }}
-                        />
-                      </div>
+        <section className="card">
+          <SectionHeader title="Recent incidents" description={`${counts.activeIncidents} active response records`} icon={Clock3} />
+          {recentIncidents.length ? (
+            <div className="recent-incident-list">
+              {recentIncidents.map(incident => (
+                <article className="recent-incident" key={incident.id}>
+                  <div className="recent-incident-main">
+                    <div className="recent-incident-title" title={incident.title}>{incident.title}</div>
+                    <div className="recent-incident-meta">
+                      {incident.location || 'Location unavailable'} · {formatIncidentDate(incident.created_at)}
                     </div>
-                  </td>
-                  <td>{road.weather_condition}</td>
-                  <td>{road.traffic_level}</td>
-                </tr>
+                  </div>
+                  <div className="recent-incident-badges">
+                    <SeverityBadge severity={incident.severity} />
+                    <StatusBadge status={incident.status} />
+                  </div>
+                </article>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          ) : <EmptyState title="No incident reports yet" description="Submitted reports will appear here." />}
+        </section>
       </div>
 
-      <div className="stats-grid" style={{ marginTop: 0 }}>
-        <div className="stat-card">
-          <div className="stat-value">{incidents.filter(i => i.status === 'active').length}</div>
-          <div className="stat-label">Active Incidents</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{incidents.filter(i => i.status === 'resolved').length}</div>
-          <div className="stat-label">Resolved</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{teams.filter(t => t.availability === 'busy').length}</div>
-          <div className="stat-label">Busy Teams</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{roads.filter(r => r.accessibility === 'accessible').length}</div>
-          <div className="stat-label">Accessible Roads</div>
-        </div>
+      <div className="dashboard-bottom-grid">
+        <section className="card">
+          <SectionHeader title="Road accessibility" description="Current persisted status for the simulated network." icon={MapPinned} />
+          {data.roads.length ? (
+            <div className="dashboard-road-list">
+              {roadCounts.map(item => (
+                <div className="road-status-row" key={item.key}>
+                  <span className="road-status-name">{item.label}</span>
+                  <div className="team-status-track">
+                    <div
+                      className="team-status-fill"
+                      style={{
+                        width: `${data.roads.length ? (item.value / data.roads.length) * 100 : 0}%`,
+                        background: item.color,
+                      }}
+                    />
+                  </div>
+                  <strong className="road-status-count">{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          ) : <EmptyState title="No road records" description="Road data is not available from the backend." />}
+        </section>
+
+        <section className="card">
+          <SectionHeader title="Team readiness" description="Availability from the emergency team roster." icon={Users} />
+          {data.teams.length ? (
+            <div className="team-status-list">
+              {teamCounts.map(item => (
+                <div className="team-status-line" key={item.status}>
+                  <span>{item.status.replaceAll('_', ' ')}</span>
+                  <div className="team-status-track">
+                    <div
+                      className={`team-status-fill ${item.status}`}
+                      style={{ width: `${(item.value / data.teams.length) * 100}%` }}
+                    />
+                  </div>
+                  <strong>{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          ) : <EmptyState title="No teams registered" description="Team status will appear after teams are added." />}
+          <div className="mini-metric"><Activity size={15} /><span>Assignments saved</span><strong>{data.assignments.length}</strong></div>
+        </section>
       </div>
+
+      <section className="card activity-card">
+        <SectionHeader title="Incident activity" description="Reports grouped by their recorded creation date." icon={Activity} />
+        {activityData.length ? (
+          <div className="activity-chart">
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={activityData} margin={{ top: 8, right: 12, bottom: 4, left: -18 }}>
+                <XAxis dataKey="date" tick={{ fill: '#8295ac', fontSize: 10 }} axisLine={{ stroke: '#33465e' }} tickLine={false} />
+                <YAxis allowDecimals={false} tick={{ fill: '#8295ac', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ background: '#102137', border: '1px solid #2a405a', borderRadius: 8, color: '#e7eef8' }}
+                  cursor={{ fill: 'rgba(83, 162, 255, 0.08)' }}
+                />
+                <Bar dataKey="reports" name="Reports" fill="#53a2ff" radius={[5, 5, 0, 0]} maxBarSize={38} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : <EmptyState title="No dated activity available" description="The chart uses timestamps returned with incident records." />}
+      </section>
     </div>
   )
 }
